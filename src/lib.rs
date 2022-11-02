@@ -1,69 +1,78 @@
-use parking_lot::Mutex;
-use crossbeam_queue::SegQueue;
-use dashmap::DashSet;
+use std::{hash::Hash, collections::{VecDeque, HashSet}};
 
+use parking_lot::RwLock;
 
-pub struct ConSetQueue<T> {
-    lock: Mutex<()>,
-    set: DashSet<Arc<T>>,
-    queue: SegQueue<Arc<T>>,
+pub struct RawCSQ<T> {
+    queue: VecDeque<T>,
+    set: HashSet<T>,
 }
 
-impl<T> std::fmt::Debug for ConSetQueue<T>
-where T: std::fmt::Debug + Eq + Hash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ConSetQueue").field("set", &self.set).field("queue", &self.queue).finish()
-    }
-}
-
-impl<T> Default for ConSetQueue<T>
-where T: Eq + Hash {
-    fn default() -> Self {
+impl<T> RawCSQ<T> {
+    fn new() -> Self {
         Self {
-            lock: Mutex::default(),
-            set: DashSet::default(),
-            queue: SegQueue::default(),
+            queue: VecDeque::new(),
+            set: HashSet::new(),
         }
     }
 }
 
-impl<T> ConSetQueue<T> 
+pub struct ConcurrentSetQueue<T> {
+    inner: RwLock<RawCSQ<T>>
+}
+
+impl<T> std::fmt::Debug for ConcurrentSetQueue<T> 
+where T: std::fmt::Debug + Eq + Hash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConcurrentSetQueue").finish()
+    }
+}
+
+
+impl<T> Default for ConcurrentSetQueue<T> 
+where T: Eq + Hash {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> ConcurrentSetQueue<T> 
 where T: Eq + Hash {
     pub fn new() -> Self {
-        Self::default()
-    }
-    
-    pub fn push(&self, value: T) {
-        let _guard = self.lock.lock().unwrap();
-
-        if !self.set.contains(&value) {
-            let ptr = Arc::new(value);
-
-            self.queue.push(ptr.clone());
-            self.set.insert(ptr);
+        Self {
+            inner: RwLock::new(RawCSQ::new())
         }
     }
 
     pub fn pop(&self) -> Option<T> {
-        let _guard = self.lock.lock().unwrap();
+        let mut w = self.inner.write();
 
-        if let Some(ptr) = self.queue.pop() {
-            self.set.remove(&ptr);
-
-            match Arc::try_unwrap(ptr) {
-                Ok(value) => { return Some(value) }
-                Err(_) => { panic!() }
-            }
+        if let Some(value) = w.queue.pop_front() {
+            w.set.remove(&value);
+            return Some(value);
         }
 
-        return None;
+        None
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.queue.is_empty()
-    }
+    pub fn drain(&self, amount: usize) -> impl Iterator<Item = T> + '_ {
+        (0..amount).map_while(|_| {
+            if let Some(value) = self.pop() {
+                return Some(value);
+            }
 
-    pub fn len(&self) -> usize {
-        self.queue.len()
+            None
+        })
     }
+}
+
+impl<T> ConcurrentSetQueue<T> 
+where T: Eq + Hash + Clone {
+    pub fn push(&self, value: T) {
+        let mut w = self.inner.write();
+
+        if !w.set.contains(&value) {
+            w.set.insert(value.clone());
+            w.queue.push_back(value);
+        }
+    }    
 }

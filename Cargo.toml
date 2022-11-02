@@ -1,13 +1,11 @@
 [package]
 name = "csq"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "A concurrent Set Queue."
+description = "A Concurrent Set Queue implemented in Safe Rust."
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/hankjordan/csq"
 
 [dependencies]
-crossbeam-queue = "0.3"
-dashmap = "5.4"
 parking_lot = "0.12"
